@@ -1147,6 +1147,7 @@
             <option value="iban">iban</option>
             <option value="national-id">national-id</option>
             <option value="dob">dob</option>
+            <option value="uuid">uuid</option>
             <option value="key">key</option>
             <option value="regex">regex</option>
           </select>
@@ -1405,7 +1406,7 @@
 
 <script>
 // ─── Constants ──────────────────────────────────────────────
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 
 const STORAGE_KEYS = {
   terms: 'anon_terms',
@@ -1550,11 +1551,13 @@ const I18N = {
     helpPseudo: 'Pseudonymization',
     helpPseudoText: 'Enable in Settings to replace sensitive values with realistic fake data instead of <REDACTED-NNN> tokens. Person names become fake names, IPs become RFC 5737 test addresses, emails become fake addresses, and so on. Fake values are consistent per token and stored in the session for de-redaction.',
     helpSecurity: 'Security & storage',
-    helpSecurityLocal: 'All data (terms, session mappings) is stored in your browser\'s localStorage.',
+    helpSecurityLocal: 'All data (terms, session mappings) is stored in your browser\'s localStorage. Without encryption enabled, this data is stored in plain text and accessible to anything running in the same browser origin.',
     helpSecurityEncrypt: 'Enable AES-256-GCM encryption in Settings to protect stored data with a password (min. 8 characters). Uses PBKDF2 with 600,000 iterations for key derivation.',
     helpSecurityNoNetwork: 'Zero network requests — no external scripts, fonts, or APIs are loaded. Enforced by Content Security Policy.',
     helpSecuritySession: 'Session mappings link tokens back to original values. Clear the session when sharing redacted text to prevent restoration.',
     helpSecurityClipboard: 'Copied output goes to your system clipboard. Be mindful of clipboard managers.',
+    helpDisclaimer: 'Disclaimer',
+    helpDisclaimerText: 'This tool is a convenience aid and does not guarantee complete removal of all sensitive data. Encoded values (e.g. Base64, URL-encoded), Unicode homoglyphs, or deeply nested structures may not be detected. Do not rely on this tool as the sole safeguard for compliance-critical workflows.',
     helpSessions: 'Sessions',
     helpSessionsText: 'Each session maintains its own token-to-original mapping. Create multiple named sessions to keep separate contexts (e.g. per case or per customer). Clearing a session permanently deletes the mappings — tokens become unrecoverable.',
     helpGroups: 'Term groups',
@@ -1603,6 +1606,7 @@ const I18N = {
     selectMode: 'Select',
     cancelSelect: 'Cancel',
     selectAll: 'Select all',
+    bulkSelected: '{n} selected',
     bulkDelete: 'Delete {n} selected',
     regexUnsafeNested: 'Unsafe regex \u2014 nested quantifiers (e.g. (a+)+)',
     regexUnsafeAlt: 'Unsafe regex \u2014 quantified alternation (e.g. (a|b)+)',
@@ -1718,11 +1722,13 @@ const I18N = {
     helpPseudo: 'Pseudonymisering',
     helpPseudoText: 'Aktiver i Innstillinger for å erstatte sensitive verdier med realistiske falske data i stedet for <REDACTED-NNN>-tokens. Personnavn blir falske navn, IP-er blir RFC 5737-testadresser, e-poster blir falske adresser osv. Falske verdier er konsistente per token og lagres i økten for gjenoppretting.',
     helpSecurity: 'Sikkerhet og lagring',
-    helpSecurityLocal: 'All data (termer, økt-mappinger) lagres i nettleserens localStorage.',
+    helpSecurityLocal: 'All data (termer, økt-mappinger) lagres i nettleserens localStorage. Uten kryptering aktivert lagres dataene i klartekst og er tilgjengelig for alt som kjører i samme nettleseropprinnelse.',
     helpSecurityEncrypt: 'Aktiver AES-256-GCM-kryptering i Innstillinger for å beskytte lagret data med passord (min. 8 tegn). Bruker PBKDF2 med 600 000 iterasjoner for nøkkelavledning.',
     helpSecurityNoNetwork: 'Null nettverksforespørsler — ingen eksterne skript, fonter eller API-er lastes. Håndhevet av Content Security Policy.',
     helpSecuritySession: 'Økt-mappinger kobler tokens tilbake til originalverdier. Tøm økten når du deler sladdet tekst for å forhindre gjenoppretting.',
     helpSecurityClipboard: 'Kopiert output går til systemets utklippstavle. Vær oppmerksom på utklippstavlebehandlere.',
+    helpDisclaimer: 'Ansvarsfraskrivelse',
+    helpDisclaimerText: 'Dette verktøyet er et hjelpemiddel og garanterer ikke fullstendig fjerning av all sensitiv data. Kodede verdier (f.eks. Base64, URL-kodet), Unicode-homoglyfer eller dypt nestede strukturer kan unngå deteksjon. Ikke stol på dette verktøyet som eneste sikring for arbeid som krever etterlevelse.',
     helpSessions: 'Økter',
     helpSessionsText: 'Hver økt har sin egen token-til-original-mapping. Opprett flere navngitte økter for å holde separate kontekster (f.eks. per sak eller per kunde). Tømming av en økt sletter mappingene permanent — tokens blir ugjenkallelige.',
     helpGroups: 'Termgrupper',
@@ -1771,6 +1777,7 @@ const I18N = {
     selectMode: 'Velg',
     cancelSelect: 'Avbryt',
     selectAll: 'Velg alle',
+    bulkSelected: '{n} valgt',
     bulkDelete: 'Slett {n} valgte',
     regexUnsafeNested: 'Usikker regex \u2014 n\u00f8stede kvantifiserere (f.eks. (a+)+)',
     regexUnsafeAlt: 'Usikker regex \u2014 kvantifisert alternering (f.eks. (a|b)+)',
@@ -1886,11 +1893,13 @@ const I18N = {
     helpPseudo: 'Pseudonymisering',
     helpPseudoText: 'Aktivera i Inställningar för att ersätta känsliga värden med realistiska fejkade data istället för <REDACTED-NNN>-tokens. Personnamn blir fejkade namn, IP-adresser blir RFC 5737-testadresser, e-post blir fejkade adresser osv. Fejkade värden är konsekventa per token och lagras i sessionen för återställning.',
     helpSecurity: 'Säkerhet och lagring',
-    helpSecurityLocal: 'All data (termer, sessionsmappningar) lagras i webbläsarens localStorage.',
+    helpSecurityLocal: 'All data (termer, sessionsmappningar) lagras i webbläsarens localStorage. Utan kryptering aktiverad lagras data i klartext och är tillgänglig för allt som körs i samma webbläsarursprung.',
     helpSecurityEncrypt: 'Aktivera AES-256-GCM-kryptering i Inställningar för att skydda lagrad data med lösenord (min. 8 tecken). Använder PBKDF2 med 600 000 iterationer för nyckelderivering.',
     helpSecurityNoNetwork: 'Noll nätverksförfrågningar — inga externa skript, typsnitt eller API:er laddas. Hanteras av Content Security Policy.',
     helpSecuritySession: 'Sessionsmappningar kopplar tokens till originalvärden. Töm sessionen vid delning av maskerad text för att förhindra återställning.',
     helpSecurityClipboard: 'Kopierad utdata hamnar i systemets urklipp. Var medveten om urklippshanterare.',
+    helpDisclaimer: 'Ansvarsfriskrivning',
+    helpDisclaimerText: 'Detta verktyg är ett hjälpmedel och garanterar inte fullständig borttagning av all känslig data. Kodade värden (t.ex. Base64, URL-kodade), Unicode-homoglyfer eller djupt nästlade strukturer kanske inte upptäcks. Förlita dig inte på detta verktyg som enda skydd för efterlevnadskritiska arbetsflöden.',
     helpSessions: 'Sessioner',
     helpSessionsText: 'Varje session har sin egen token-till-original-mappning. Skapa flera namngivna sessioner för separata kontexter (t.ex. per ärende eller per kund). Tömning av en session raderar mappningarna permanent — tokens blir oåterkalleliga.',
     helpGroups: 'Termgrupper',
@@ -1939,6 +1948,7 @@ const I18N = {
     selectMode: 'Välj',
     cancelSelect: 'Avbryt',
     selectAll: 'Välj alla',
+    bulkSelected: '{n} valda',
     bulkDelete: 'Ta bort {n} valda',
     regexUnsafeNested: 'Os\u00e4kert regex \u2014 n\u00e4stlade kvantifierare (t.ex. (a+)+)',
     regexUnsafeAlt: 'Os\u00e4kert regex \u2014 kvantifierad alternering (t.ex. (a|b)+)',
@@ -2054,11 +2064,13 @@ const I18N = {
     helpPseudo: 'Pseudonymisering',
     helpPseudoText: 'Aktiver i Indstillinger for at erstatte f\u00f8lsomme v\u00e6rdier med realistiske falske data i stedet for <REDACTED-NNN>-tokens. Personnavne bliver falske navne, IP-er bliver RFC 5737-testadresser, e-mails bliver falske adresser osv. Falske v\u00e6rdier er konsistente per token og gemmes i sessionen til gendannelse.',
     helpSecurity: 'Sikkerhed og lagring',
-    helpSecurityLocal: 'Al data (termer, sessionskortlægninger) gemmes i browserens localStorage.',
+    helpSecurityLocal: 'Al data (termer, sessionskortlægninger) gemmes i browserens localStorage. Uden kryptering aktiveret gemmes data i klartekst og er tilgængelig for alt der kører i samme browseroprindelse.',
     helpSecurityEncrypt: 'Aktiver AES-256-GCM-kryptering i Indstillinger for at beskytte gemt data med adgangskode (min. 8 tegn). Bruger PBKDF2 med 600.000 iterationer til nøgleafledning.',
     helpSecurityNoNetwork: 'Nul netværksforespørgsler — ingen eksterne scripts, skrifttyper eller API-er indlæses. Håndhævet af Content Security Policy.',
     helpSecuritySession: 'Sessionskortlægninger kobler tokens til originalværdier. Ryd sessionen ved deling af sladdet tekst for at forhindre gendannelse.',
     helpSecurityClipboard: 'Kopieret output går til systemets udklipsholder. Vær opmærksom på udklipsholderværktøjer.',
+    helpDisclaimer: 'Ansvarsfraskrivelse',
+    helpDisclaimerText: 'Dette værktøj er et hjælpemiddel og garanterer ikke fuldstændig fjernelse af alle følsomme data. Kodede værdier (f.eks. Base64, URL-kodet), Unicode-homoglyfer eller dybt indlejrede strukturer kan undgå detektion. Stol ikke på dette værktøj som eneste sikring for arbejde der kræver overholdelse.',
     helpSessions: 'Sessioner',
     helpSessionsText: 'Hver session har sin egen token-til-original-kortlægning. Opret flere navngivne sessioner for separate kontekster (f.eks. per sag eller per kunde). Rydning af en session sletter kortlægningerne permanent — tokens bliver uigenkaldelige.',
     helpGroups: 'Termgrupper',
@@ -2107,6 +2119,7 @@ const I18N = {
     selectMode: 'V\u00e6lg',
     cancelSelect: 'Annuller',
     selectAll: 'V\u00e6lg alle',
+    bulkSelected: '{n} valgt',
     bulkDelete: 'Slet {n} valgte',
     regexUnsafeNested: 'Usikker regex \u2014 nestede kvantifikatorer (f.eks. (a+)+)',
     regexUnsafeAlt: 'Usikker regex \u2014 kvantificeret alternering (f.eks. (a|b)+)',
@@ -2413,27 +2426,17 @@ function isValidRegex(pattern) {
   return !isReDoSRisk(pattern);
 }
 
+const REDOS_CHECKS = [
+  { re: /([+*?]|\{\d+,?\d*\})\s*\)\s*([+*?]|\{\d+,?\d*\})/, key: 'regexUnsafeNested' },
+  { re: /\([^)]*[+*?]\{?[^)]*\)\s*[+*]/, key: 'regexUnsafeNested' },
+  { re: /\([^)]*\|[^)]*\)\s*[+*]/, key: 'regexUnsafeAlt' },
+  { re: /(\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*](\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*](\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*]/, key: 'regexUnsafeMulti' },
+  { re: /\(([^|)]+)\|(\1)\)/, key: 'regexUnsafeOverlap' },
+  { re: /(\[[^\]]+\][+*]){4,}/, key: 'regexUnsafeMulti' },
+];
+
 function isReDoSRisk(pattern) {
-  // Structural checks for common ReDoS patterns
-  // 1. Nested quantifiers: (a+)+, (a*)+, (?:a+){2,}, (a?)+
-  const nestedQuant = /([+*?]|\{\d+,?\d*\})\s*\)\s*([+*?]|\{\d+,?\d*\})/;
-  if (nestedQuant.test(pattern)) return true;
-  // 2. Quantifier inside group followed by group quantifier: (?:a+b)+
-  const innerQuant = /\([^)]*[+*?]\{?[^)]*\)\s*[+*]/;
-  if (innerQuant.test(pattern)) return true;
-  // 3. Quantified groups with alternation followed by quantifier: (a|b)+
-  const altQuant = /\([^)]*\|[^)]*\)\s*[+*]/;
-  if (altQuant.test(pattern)) return true;
-  // 4. Multiple adjacent quantified wildcards: \w+\w+\w+
-  const adjacentWild = /(\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*](\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*](\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*]/;
-  if (adjacentWild.test(pattern)) return true;
-  // 5. Overlapping alternation: (a|a), (\d|\w)
-  const overlapAlt = /\(([^|)]+)\|(\1)\)/;
-  if (overlapAlt.test(pattern)) return true;
-  // 6. Star-of-star via character classes: [a-z]*[a-z]*[a-z]*[a-z]*
-  const starStar = /(\[[^\]]+\][+*]){4,}/;
-  if (starStar.test(pattern)) return true;
-  // 7. Time-based validation against multiple poison strings
+  if (REDOS_CHECKS.some(c => c.re.test(pattern))) return true;
   try {
     const re = new RegExp(stripInlineFlags(pattern), 'gi');
     const poisons = [
@@ -2452,18 +2455,9 @@ function isReDoSRisk(pattern) {
 }
 
 function getReDoSReason(pattern) {
-  const nestedQuant = /([+*?]|\{\d+,?\d*\})\s*\)\s*([+*?]|\{\d+,?\d*\})/;
-  if (nestedQuant.test(pattern)) return t('regexUnsafeNested');
-  const innerQuant = /\([^)]*[+*?]\{?[^)]*\)\s*[+*]/;
-  if (innerQuant.test(pattern)) return t('regexUnsafeNested');
-  const altQuant = /\([^)]*\|[^)]*\)\s*[+*]/;
-  if (altQuant.test(pattern)) return t('regexUnsafeAlt');
-  const adjacentWild = /(\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*](\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*](\\[wWdDsS]|\.\*?|\[[^\]]+\])[+*]/;
-  if (adjacentWild.test(pattern)) return t('regexUnsafeMulti');
-  const overlapAlt = /\(([^|)]+)\|(\1)\)/;
-  if (overlapAlt.test(pattern)) return t('regexUnsafeOverlap');
-  const starStar = /(\[[^\]]+\][+*]){4,}/;
-  if (starStar.test(pattern)) return t('regexUnsafeMulti');
+  for (const c of REDOS_CHECKS) {
+    if (c.re.test(pattern)) return t(c.key);
+  }
   return t('regexUnsafe');
 }
 
@@ -2574,7 +2568,7 @@ class TermList {
     if (!storedValue) return { ok: false, error: t('emptyValue') };
     if (type === 'regex' && !isValidRegex(storedValue)) {
       const isSyntax = (() => { try { new RegExp(stripInlineFlags(storedValue), 'gi'); return false; } catch { return true; } })();
-      return { ok: false, error: isSyntax ? t('regexInvalid') : t('regexUnsafe') };
+      return { ok: false, error: isSyntax ? t('regexInvalid') : getReDoSReason(storedValue) };
     }
     if (type === 'cidr' && !isValidCIDR(storedValue)) return { ok: false, error: t('cidrInvalid') };
     if (type === 'ip' && !isValidIPv4(storedValue)) return { ok: false, error: t('ipInvalid') };
@@ -3081,22 +3075,15 @@ class RedactorEngine {
   constructor(sessionManager) {
     this.sm = sessionManager;
     this.reverseMap = {};
-    this.reverseFakeMap = {};
     this.pseudoGen = new PseudoGenerator();
     this.lastStats = null;
   }
 
   rebuildReverse() {
     this.reverseMap = {};
-    this.reverseFakeMap = {};
     const s = this.sm.active;
     for (const [token, orig] of Object.entries(s.map)) {
       this.reverseMap[orig] = token;
-    }
-    if (s.fakeMap) {
-      for (const [token, fake] of Object.entries(s.fakeMap)) {
-        this.reverseFakeMap[fake] = token;
-      }
     }
   }
 
@@ -3114,7 +3101,6 @@ class RedactorEngine {
         if (!s.fakeMap[existing]) {
           const src = source || s.sources[existing] || '';
           s.fakeMap[existing] = this.pseudoGen.generate(existing, original, src);
-          this.reverseFakeMap[s.fakeMap[existing]] = existing;
           this._dirty = true;
         }
       }
@@ -3131,7 +3117,6 @@ class RedactorEngine {
     if (settings.pseudonymize) {
       const fake = this.pseudoGen.generate(token, original, source);
       s.fakeMap[token] = fake;
-      this.reverseFakeMap[fake] = token;
     }
     this._dirty = true;
     return token;
@@ -3142,7 +3127,7 @@ class RedactorEngine {
     this._dirty = false;
     this.rebuildReverse();
 
-    let result = text;
+    let result = text.normalize('NFKC');
     let replacements = 0;
     const stats = []; // {value, type, count}
 
@@ -3422,7 +3407,6 @@ class RedactorEngine {
     s.fakeMap = {};
     s.counter = 0;
     this.reverseMap = {};
-    this.reverseFakeMap = {};
     await this.sm.save();
   }
 
@@ -3443,7 +3427,7 @@ class UndoManager {
     if (this.undoStack.length === 0) return null;
     const state = this.undoStack.pop();
     this.redoStack.push(state);
-    return this.undoStack.length > 0 ? this.undoStack[this.undoStack.length - 1] : state._prev || null;
+    return this.undoStack.length > 0 ? this.undoStack[this.undoStack.length - 1] : null;
   }
 
   redo() {
@@ -3981,7 +3965,7 @@ class UI {
 
   updateBulkBar() {
     const n = this._selectedIds ? this._selectedIds.size : 0;
-    document.getElementById('bulkCount').textContent = n > 0 ? `${n} selected` : '';
+    document.getElementById('bulkCount').textContent = n > 0 ? t('bulkSelected', { n }) : '';
     const delBtn = document.getElementById('btnBulkDelete');
     delBtn.textContent = t('bulkDelete', { n });
     delBtn.disabled = n === 0;
@@ -4139,7 +4123,7 @@ class UI {
     const text = this.els.inputText.value;
     if (!text) { this.setStatus(t('noInputText')); return; }
     const hasPresets = this.settings.presets && Object.values(this.settings.presets).some(Boolean);
-    if (this.termList.terms.length === 0 && !this.settings.autoDetectEmails && !this.settings.autoDetectFQDN && !this.settings.autoDetectUUIDs && !hasPresets) {
+    if (this.termList.terms.length === 0 && !this.settings.autoDetectIPs && !this.settings.autoDetectEmails && !this.settings.autoDetectFQDN && !this.settings.autoDetectUUIDs && !this.settings.autoDetectIPv6 && !this.settings.autoDetectMAC && !hasPresets) {
       this.setStatus(t('addTermsFirst'), 'warning');
       return;
     }
@@ -4179,7 +4163,7 @@ class UI {
 
     const { output, warnings } = this.engine.restore(text, this.settings);
     this.currentOutputText = output;
-    this.els.outputDisplay.textContent = output;
+    this.renderHighlightedOutput(output);
 
     if (warnings.length > 0) {
       this.setStatus(t('unknownTokens', { n: warnings.length, list: warnings.join(', ') }), 'warning');
@@ -4305,7 +4289,7 @@ class UI {
     const input = this.els.inputText.value;
     this.els.inputText.value = this.currentOutputText;
     this.currentOutputText = input;
-    this.els.outputDisplay.textContent = input;
+    this.renderHighlightedOutput(input);
   }
 
   clearIO() {
@@ -4502,6 +4486,10 @@ class UI {
         content: [
           { type: 'ul', items: ['helpSecurityLocal', 'helpSecurityEncrypt', 'helpSecurityNoNetwork', 'helpSecuritySession', 'helpSecurityClipboard'] },
         ],
+      },
+      {
+        title: 'helpDisclaimer',
+        content: [{ type: 'p', key: 'helpDisclaimerText' }],
       },
       {
         title: 'helpShortcuts',

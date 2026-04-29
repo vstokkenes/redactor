@@ -19,32 +19,97 @@ Redactor replaces sensitive information in text with consistent, reversible toke
 
 ## Features
 
-### Data types
+### Term types
 
-| Type | Example input | How to add |
-|------|--------------|------------|
-| Plain text | `John Smith` | Type directly |
-| IPv4 address | `192.168.1.1` | Type or auto-detect |
-| CIDR range | `10.0.0.0/8` | Matches all IPs in range |
-| Email | `user@example.com` | Type or auto-detect |
-| FQDN | `api.internal.corp` | Type or auto-detect |
-| UUID | `550e8400-e29b-...` | Type or auto-detect |
-| Key:value | `key:password` | Prefix with `key:` — matches values after `=`, `:`, `=>` |
-| Regex | `regex:\b\d{11}\b` | Prefix with `regex:` for custom patterns |
+Terms are added in the term input field. The type is detected automatically from a prefix (e.g. `person:`, `project:`) or from the value itself (e.g. a bare `192.168.0.0/24` becomes a CIDR). The prefix is stripped before storage.
+
+You can add several terms at once by separating them with commas — commas inside `{}` and `[]` are preserved (regex-safe).
+
+#### Generic
+
+| Prefix | Example | Notes |
+|--------|---------|-------|
+| *(none)* | `secretword` | Plain text match |
+| `regex:` | `regex:\b\d{11}\b` | Custom pattern; validated against catastrophic backtracking |
+| `key:` | `key:password` | Matches the value after `=`, `:` or `=>` delimiters |
+
+#### People
+
+| Prefix | Example | Notes |
+|--------|---------|-------|
+| `person:` | `person:John Smith` | Full name |
+| `person-first:` | `person-first:John` | First name only |
+| `person-last:` | `person-last:Smith` | Last name only |
+
+#### Organizations & projects
+
+| Prefix | Example | Notes |
+|--------|---------|-------|
+| `org:` | `org:Acme Corp` | External company / organization |
+| `corp:` | `corp:Platform Team` | Internal team or department name |
+| `project:` | `project:Bluebird` | Project name or codename |
+
+#### Network
+
+| Prefix | Example | Notes |
+|--------|---------|-------|
+| `ip:` | `ip:192.168.1.1` | IPv4 (also auto-detected from bare values) |
+| `ipv6:` | `ipv6:2001:db8::1` | IPv6 (auto-detect optional in Settings) |
+| `cidr:` | `cidr:10.0.0.0/8` | Matches all IPs in range; auto-detected from bare values |
+| `mac:` | `mac:aa:bb:cc:dd:ee:ff` | MAC address (auto-detect optional in Settings) |
+| `fqdn:` | `fqdn:api.internal.corp` | Fully qualified domain name (auto-detect optional) |
+| `domain:` | `domain:internal.corp` | Domain name |
+| `server:` | `server:db01` | Server / hostname |
+| `url:` | `url:https://example.com/x` | Full HTTP/HTTPS URL; validated via URL API |
+| `email:` | `email:user@example.com` | Email (auto-detect optional in Settings) |
+
+#### Identifiers
+
+| Prefix | Example | Notes |
+|--------|---------|-------|
+| `phone:` | `phone:+47 12345678` | Phone number |
+| `account:` | `account:ACC-12345` | Account identifier |
+| `iban:` | `iban:NO9386011117947` | Bank account; mod-97 checksum validated |
+| `national-id:` | `national-id:1234567` | Generic national ID (non-Norwegian) |
+| `dob:` | `dob:1985-04-12` | Date of birth — accepts `YYYY-MM-DD` or `DD.MM.YYYY` |
+| `hash:` | `hash:5d41402a...` | Hex digest; validates length (MD5/SHA-1/256/512 etc.) |
+| `location:` | `location:Oslo` | Place name |
 
 ### Auto-detection
 
-Toggle in settings to automatically find and redact:
+Toggle in Settings to automatically find and redact common patterns without listing each value as a term:
+
 - IPv4 addresses (on by default)
 - Email addresses
 - Hostnames / FQDNs
 - UUIDs
+- IPv6 addresses
+- MAC addresses
 
 ### Built-in presets
 
+Toggle in Settings:
+
 - Norwegian SSN (11-digit personal numbers)
 - Phone numbers (Norwegian format)
-- API keys (common prefixes like `sk_`, `api_`, `token_`)
+- API keys (common prefixes like `sk_`, `pk_`, `api_`, `token_`, `secret_`)
+
+### Pseudonymization
+
+Optional mode (toggle in Settings) — instead of replacing values with `<REDACTED-NNN>` tokens, redactor substitutes realistic fake values:
+
+- `person:` → fake names from embedded dictionaries
+- `ip:` → RFC 5737 TEST-NET addresses (`198.51.100.x`, `203.0.113.x`)
+- `ipv6:` → RFC 3849 documentation range (`2001:db8::…`)
+- `mac:` → locally administered, unicast MAC
+- `email:` → fake address using RFC 2606 domain
+- `fqdn:`/`server:` → fake hostname + fake domain
+- `iban:` → fake Norwegian IBAN
+- `dob:` → fake birth date
+- `hash:` → random hex of the same length as the original
+- `org:`/`corp:`/`project:`/`location:`/`phone:`/`account:` → values from embedded dictionaries
+
+Fake values are deterministic per token within a session — the same token always renders the same fake value, so the output stays internally consistent. The mapping is stored in the session, so you can still restore the original text afterwards.
 
 ### Sessions
 
