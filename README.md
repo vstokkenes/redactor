@@ -144,11 +144,41 @@ Each session maintains a consistent mapping between original values and tokens. 
 - **Zero network requests** — no external scripts, fonts, APIs, or tracking
 - **Strict CSP** — `default-src 'none'` Content Security Policy
 - **Mandatory encrypted export** — term exports are always password-protected (AES-256-GCM), since exported files may be shared via email or other channels
-- **Optional encrypted storage** — AES-256-GCM encryption for localStorage data
+- **Optional encrypted storage** — AES-256-GCM encryption for localStorage data (off by default — see Limitations)
 - **Secure password input** — all password prompts use modal dialogs with masked input (no browser `prompt()`)
 - **Brute-force protection** — exponential backoff on failed unlock attempts (lockout after 5 failures)
 - **ReDoS protection** — user-supplied regex patterns are validated with structural analysis and time-based checks to prevent catastrophic backtracking
 - **Single HTML file** — easy to audit, no build step, no dependencies
+
+> **Client-side is not isolated.** Browser extensions, devtools, screen sharing, clipboard managers, and browser sync can still observe input and output while the tab is open. Treat the browser environment itself as part of the trust boundary.
+
+## Limitations
+
+### Context can re-identify what redaction tokens hide
+
+Redactor replaces *identifiers*, not *context*. Even when every name, IP, and email is correctly tokenized, the surrounding text can still reveal what was redacted:
+
+- A redacted person's name next to their unique job title, employer, and city is often still identifiable
+- A redacted IP address surrounded by ASN / routing details narrows back down to a small set
+- A redacted customer name accompanied by an unmistakable description of their product or contract terms is effectively un-redacted
+
+The tool also cannot detect what it does not know about: encoded values (Base64, URL-encoded), Unicode homoglyphs that survive NFKC normalization, deeply nested structures, or sensitive information you have not added as a term and which is not covered by auto-detection or built-in presets.
+
+### Session exports contain the originals in plaintext
+
+Session JSON exports include the full token-to-original mapping. Sharing a session export with a colleague to let them de-redact the text is equivalent to sharing the underlying sensitive data — handle the file with the same care as the raw input.
+
+### Pseudonymized values look real
+
+In pseudonymization mode the substitutes (RFC 5737 IPs, fake IBANs, fake names, fake hostnames) are designed to be valid-looking — they fit each type's syntax so the redacted text remains usable. They are not real anonymization: the session still maps them back to the originals, and a recipient unaware of the mode may treat the fake values as truthful data. Always tell recipients when output is pseudonymized.
+
+### localStorage is unencrypted by default
+
+Terms, sessions, and settings persist in browser localStorage across visits. Encryption is opt-in (toggle in Settings — AES-256-GCM with PBKDF2 key derivation). On a shared device, anyone with access to the same browser profile can read every term and session unless encryption is enabled or you clear the data when finished.
+
+### Always review the redacted output before sharing
+
+Redactor is a convenience aid, not a guarantee of anonymity, and should not be the sole safeguard for compliance-critical workflows.
 
 ## Languages
 
