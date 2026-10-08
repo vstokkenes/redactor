@@ -1263,6 +1263,12 @@
       </div>
       <div class="field">
         <div class="toggle-row">
+          <span data-i18n="pseudonymizeIPs">Anonymize IPs (fake addresses)</span>
+          <div class="toggle-switch" id="settingPseudonymizeIPs"></div>
+        </div>
+      </div>
+      <div class="field">
+        <div class="toggle-row">
           <span data-i18n="autoDetectIPs">Auto-detect IPs in text</span>
           <div class="toggle-switch on" id="settingAutoIP"></div>
         </div>
@@ -1406,7 +1412,7 @@
 
 <script>
 // ─── Constants ──────────────────────────────────────────────
-const VERSION = '1.1.1';
+const VERSION = '1.2.0';
 
 const STORAGE_KEYS = {
   terms: 'anon_terms',
@@ -1424,6 +1430,7 @@ const DEFAULT_SETTINGS = {
   prefix: 'REDACTED',
   wholeWord: true,
   pseudonymize: false,
+  pseudonymizeIPs: false,
   autoDetectIPs: true,
   autoDetectEmails: false,
   autoDetectFQDN: false,
@@ -1471,7 +1478,7 @@ const I18N = {
     sessionName: 'Session name:', enterSessionName: 'Enter session name',
     statistics: 'Statistics', matched: 'Matched', neverMatched: 'Never matched',
     placeholderPrefix: 'Placeholder prefix',
-    wholeWord: 'Whole-word matching', pseudonymize: 'Pseudonymize (fake values)', fakeValue: 'Fake value',
+    wholeWord: 'Whole-word matching', pseudonymize: 'Pseudonymize (fake values)', pseudonymizeIPs: 'Anonymize IPs (fake addresses)', fakeValue: 'Fake value',
     autoDetectIPs: 'Auto-detect IPs in text',
     autoDetectEmails: 'Auto-detect emails',
     autoDetectHostnames: 'Auto-detect hostnames (FQDN)',
@@ -1642,7 +1649,7 @@ const I18N = {
     sessionName: 'Øktnavn:', enterSessionName: 'Skriv inn øktnavn',
     statistics: 'Statistikk', matched: 'Treff', neverMatched: 'Aldri truffet',
     placeholderPrefix: 'Placeholder-prefix',
-    wholeWord: 'Hele-ord-matching', pseudonymize: 'Pseudonymiser (falske verdier)', fakeValue: 'Falsk verdi',
+    wholeWord: 'Hele-ord-matching', pseudonymize: 'Pseudonymiser (falske verdier)', pseudonymizeIPs: 'Anonymiser IP-er (falske adresser)', fakeValue: 'Falsk verdi',
     autoDetectIPs: 'Auto-detekter IP-er i tekst',
     autoDetectEmails: 'Auto-detekter e-poster',
     autoDetectHostnames: 'Auto-detekter vertsnavn (FQDN)',
@@ -1813,7 +1820,7 @@ const I18N = {
     sessionName: 'Sessionsnamn:', enterSessionName: 'Ange sessionsnamn',
     statistics: 'Statistik', matched: 'Träffar', neverMatched: 'Aldrig matchade',
     placeholderPrefix: 'Placeholder-prefix',
-    wholeWord: 'Helordsmatchning', pseudonymize: 'Pseudonymisera (fejkade värden)', fakeValue: 'Fejkat värde',
+    wholeWord: 'Helordsmatchning', pseudonymize: 'Pseudonymisera (fejkade värden)', pseudonymizeIPs: 'Anonymisera IP:er (fejkade adresser)', fakeValue: 'Fejkat värde',
     autoDetectIPs: 'Auto-detektera IP:er i text',
     autoDetectEmails: 'Auto-detektera e-postadresser',
     autoDetectHostnames: 'Auto-detektera värdnamn (FQDN)',
@@ -1984,7 +1991,7 @@ const I18N = {
     sessionName: 'Sessionsnavn:', enterSessionName: 'Indtast sessionsnavn',
     statistics: 'Statistik', matched: 'Matchet', neverMatched: 'Aldrig matchet',
     placeholderPrefix: 'Placeholder-prefix',
-    wholeWord: 'Helordsmatchning', pseudonymize: 'Pseudonymiser (falske værdier)', fakeValue: 'Falsk værdi',
+    wholeWord: 'Helordsmatchning', pseudonymize: 'Pseudonymiser (falske værdier)', pseudonymizeIPs: 'Anonymiser IP-er (falske adresser)', fakeValue: 'Falsk værdi',
     autoDetectIPs: 'Auto-detekter IP-er i tekst',
     autoDetectEmails: 'Auto-detekter e-mails',
     autoDetectHostnames: 'Auto-detekter værtsnavne (FQDN)',
@@ -2465,6 +2472,16 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Anchor an already-escaped literal so it only matches as a standalone value.
+// \b cannot be used here: it asserts a transition between a word and a
+// non-word character, and \w is ASCII-only, so both "Ørn" and "+47 900 00 000"
+// end up with an assertion that can never hold and are silently never matched.
+// The lookarounds cover every case \b does, including keeping "Kari" from
+// matching inside "Karianne". Requires the u flag on the resulting regex.
+function wholeWordPattern(escaped) {
+  return `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`;
+}
+
 function smartSplitComma(input) {
   if (!input.includes(',')) return [input.trim()].filter(Boolean);
   const parts = [];
@@ -2871,6 +2888,11 @@ const PSEUDO_SERVERS = [
 'ruby','sapphire','topaz','amber','basalt','cobalt','flint','garnet','ivory','jet',
 ];
 
+// Safety cap on the collision probe loop. Short-period categories stop early
+// on their own once the probe cycles back to where it started; this only
+// bounds the generators with a very long period.
+const MAX_PSEUDO_PROBES = 5000;
+
 class PseudoGenerator {
   _idx(token) {
     const m = token.match(/(\d+)/);
@@ -2895,179 +2917,237 @@ class PseudoGenerator {
     }).join('');
   }
 
-  generate(token, original, source) {
+  // Produce the fake value for a token. `taken` is the set of fake values
+  // already handed out in this session; two tokens sharing a value would make
+  // de-redaction restore the wrong original, so keep probing the next index
+  // until a free value turns up.
+  generate(token, original, source, taken = null) {
     const src = (source || '').toLowerCase();
+    const seed = this._idx(token);
+    const isFree = v => !taken || !taken.has(v);
+
+    const first = this._build(seed, original, src);
+    if (isFree(first)) return first;
+    for (let n = 1; n < MAX_PSEUDO_PROBES; n++) {
+      const fake = this._build(seed + n, original, src);
+      if (isFree(fake)) return fake;
+      // Back at the first value means a full period has been walked and every
+      // value this category can produce is taken. No point probing further.
+      if (fake === first) break;
+    }
+    // Category exhausted. Fall back to a discriminated variant, which is
+    // unbounded and so always terminates.
+    for (let n = 2; ; n++) {
+      const fake = this._variant(first, n);
+      if (isFree(fake)) return fake;
+    }
+  }
+
+  _build(i, original, src) {
     const [srcType] = src.split(':');
     let fake;
     switch (srcType) {
-      case 'person': fake = this._fullName(token); break;
-      case 'person-first': fake = this._firstName(token); break;
-      case 'person-last': fake = this._lastName(token); break;
-      case 'corp': fake = this._corp(token); break;
-      case 'org': fake = this._org(token); break;
-      case 'project': fake = this._project(token); break;
-      case 'email': fake = this._email(token); break;
-      case 'domain': fake = this._domain(token); break;
-      case 'fqdn': case 'server': fake = this._fqdn(token); break;
-      case 'ip': case 'cidr': return this._ip(token);
-      case 'location': fake = this._location(token); break;
-      case 'phone': return this._phone(token);
-      case 'account': return this._account(token);
+      case 'person': fake = this._fullName(i); break;
+      case 'person-first': fake = this._firstName(i); break;
+      case 'person-last': fake = this._lastName(i); break;
+      case 'corp': fake = this._corp(i); break;
+      case 'org': fake = this._org(i); break;
+      case 'project': fake = this._project(i); break;
+      case 'email': fake = this._email(i); break;
+      case 'domain': fake = this._domain(i); break;
+      case 'fqdn': case 'server': fake = this._fqdn(i); break;
+      case 'ip': case 'cidr': return this._ip(i);
+      case 'location': fake = this._location(i); break;
+      case 'phone': return this._phone(i);
+      case 'account': return this._account(i);
       case 'auto': {
         const sub = src.split(':')[1];
-        if (sub === 'email') fake = this._email(token);
-        else if (sub === 'fqdn') fake = this._fqdn(token);
-        else if (sub === 'uuid') return this._uuid(token);
-        else if (sub === 'ipv6') return this._ipv6(token);
-        else if (sub === 'mac') return this._mac(token);
-        else fake = this._fullName(token);
+        if (sub === 'email') fake = this._email(i);
+        else if (sub === 'fqdn') fake = this._fqdn(i);
+        else if (sub === 'uuid') return this._uuid(i);
+        else if (sub === 'ip') return this._ip(i);
+        else if (sub === 'ipv6') return this._ipv6(i);
+        else if (sub === 'mac') return this._mac(i);
+        else fake = this._fullName(i);
         break;
       }
       case 'preset': {
         const preset = src.split(':')[1];
-        if (preset === 'ssn') return this._ssn(token);
-        if (preset === 'phone') return this._phone(token);
-        return this._generic(token, original);
+        if (preset === 'ssn') return this._ssn(i);
+        if (preset === 'phone') return this._phone(i);
+        return this._generic(i, original);
       }
-      case 'regex': return this._generic(token, original);
-      case 'key': return this._guessKeyValue(token, original);
-      case 'ipv6': return this._ipv6(token);
-      case 'mac': return this._mac(token);
-      case 'url': fake = this._url(token); break;
-      case 'hash': return this._hash(token, original);
-      case 'iban': return this._iban(token);
-      case 'national-id': return this._nationalId(token);
-      case 'dob': return this._dob(token);
-      default: fake = this._fullName(token); break;
+      case 'regex': return this._generic(i, original);
+      case 'key': return this._guessKeyValue(i, original);
+      case 'ipv6': return this._ipv6(i);
+      case 'mac': return this._mac(i);
+      case 'url': fake = this._url(i); break;
+      case 'hash': return this._hash(i, original);
+      case 'iban': return this._iban(i);
+      case 'national-id': return this._nationalId(i);
+      case 'dob': return this._dob(i);
+      default: fake = this._fullName(i); break;
     }
     return this._matchCase(original, fake);
   }
 
-  _firstName(token) {
-    return PSEUDO_FIRST[this._idx(token) % PSEUDO_FIRST.length];
+  // Add a discriminator without wrecking the shape of the value, so an email
+  // stays an email and a hostname stays a hostname.
+  _variant(base, n) {
+    const at = base.indexOf('@');
+    if (at > 0) return `${base.slice(0, at)}${n}${base.slice(at)}`;
+    if (base.startsWith('https://')) return `${base}-${n}`;
+    const dot = base.indexOf('.');
+    if (dot > 0 && !base.includes(' ')) return `${base.slice(0, dot)}${n}${base.slice(dot)}`;
+    return `${base} ${n}`;
   }
-  _lastName(token) {
-    return PSEUDO_LAST[this._idx(token) % PSEUDO_LAST.length];
+
+  _firstName(i) {
+    return PSEUDO_FIRST[i % PSEUDO_FIRST.length];
   }
-  _fullName(token) {
-    const i = this._idx(token);
+  _lastName(i) {
+    return PSEUDO_LAST[i % PSEUDO_LAST.length];
+  }
+  _fullName(i) {
     return `${PSEUDO_FIRST[i % PSEUDO_FIRST.length]} ${PSEUDO_LAST[Math.floor(i / PSEUDO_FIRST.length + i * 7) % PSEUDO_LAST.length]}`;
   }
-  _corp(token) {
-    return PSEUDO_CORPS[this._idx(token) % PSEUDO_CORPS.length];
+  _corp(i) {
+    return PSEUDO_CORPS[i % PSEUDO_CORPS.length];
   }
-  _org(token) {
-    return PSEUDO_ORGS[this._idx(token) % PSEUDO_ORGS.length];
+  _org(i) {
+    return PSEUDO_ORGS[i % PSEUDO_ORGS.length];
   }
-  _project(token) {
-    return PSEUDO_PROJECTS[this._idx(token) % PSEUDO_PROJECTS.length];
+  _project(i) {
+    return PSEUDO_PROJECTS[i % PSEUDO_PROJECTS.length];
   }
-  _email(token) {
-    const i = this._idx(token);
+  _email(i) {
     const first = PSEUDO_FIRST[i % PSEUDO_FIRST.length].toLowerCase();
     const last = PSEUDO_LAST[Math.floor(i / PSEUDO_FIRST.length + i * 3) % PSEUDO_LAST.length].toLowerCase();
     const domain = PSEUDO_EMAIL_DOMAINS[i % PSEUDO_EMAIL_DOMAINS.length];
     return `${first}.${last}@${domain}`;
   }
-  _domain(token) {
-    return PSEUDO_DOMAINS[this._idx(token) % PSEUDO_DOMAINS.length];
+  _domain(i) {
+    return PSEUDO_DOMAINS[i % PSEUDO_DOMAINS.length];
   }
-  _fqdn(token) {
-    const i = this._idx(token);
+  _fqdn(i) {
     const host = PSEUDO_HOST_PREFIXES[i % PSEUDO_HOST_PREFIXES.length];
-    const domain = PSEUDO_DOMAINS[i % PSEUDO_DOMAINS.length];
+    const domain = PSEUDO_DOMAINS[Math.floor(i / PSEUDO_HOST_PREFIXES.length + i * 11) % PSEUDO_DOMAINS.length];
     return `${host}.${domain}`;
   }
-  _ip(token) {
-    const i = this._idx(token);
-    // RFC 5737 TEST-NET-2 (198.51.100.0/24) and TEST-NET-3 (203.0.113.0/24)
-    if (i < 254) return `198.51.100.${(i % 254) + 1}`;
-    return `203.0.113.${(i % 254) + 1}`;
+  // RFC 5737 TEST-NET-2, TEST-NET-3 and TEST-NET-1 (254 usable each), then the
+  // RFC 2544 benchmark range for the long tail. Distinct index, distinct
+  // address, so IPs never need the collision fallback.
+  _ip(i) {
+    if (i < 254) return `198.51.100.${i + 1}`;
+    if (i < 508) return `203.0.113.${i - 254 + 1}`;
+    if (i < 762) return `192.0.2.${i - 508 + 1}`;
+    const j = i - 762;
+    return `198.${18 + ((j >> 16) & 1)}.${(j >> 8) & 255}.${j & 255}`;
   }
-  _uuid(token) {
-    const i = this._idx(token);
+  _uuid(i) {
     const h = i.toString(16).padStart(8, '0');
     const h2 = ((i * 31) & 0xFFFF).toString(16).padStart(4, '0');
     return `${h}-${h2}-4000-a000-${((i * 17) & 0xFFFFFFFFFFFF).toString(16).padStart(12, '0')}`;
   }
-  _location(token) {
-    return PSEUDO_LOCATIONS[this._idx(token) % PSEUDO_LOCATIONS.length];
+  _location(i) {
+    return PSEUDO_LOCATIONS[i % PSEUDO_LOCATIONS.length];
   }
-  _phone(token) {
-    const i = this._idx(token);
+  _phone(i) {
     const n = (40000000 + (i * 1337) % 59999999).toString();
     return `+47 ${n.slice(0,3)} ${n.slice(3,5)} ${n.slice(5)}`;
   }
-  _account(token) {
-    const i = this._idx(token);
+  _account(i) {
     return `ACC-${(100000 + (i * 997) % 899999).toString()}`;
   }
-  _ssn(token) {
-    const i = this._idx(token);
+  _ssn(i) {
     const d = String(1 + i % 28).padStart(2, '0');
     const m = String(1 + i % 12).padStart(2, '0');
     const y = String(50 + i % 50).padStart(2, '0');
     const seq = String(100 + i % 899).padStart(3, '0');
     return `${d}${m}${y}${seq}00`;
   }
-  _generic(token, original) {
+  _generic(i, original) {
     // Produce a fake string of similar length
-    const i = this._idx(token);
     const len = original ? original.length : 6;
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     for (let j = 0; j < len; j++) result += chars[(i * 31 + j * 7) % chars.length];
     return result;
   }
-  _guessKeyValue(token, original) {
-    if (!original) return this._generic(token, original);
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(original)) return this._ip(token);
-    if (original.includes('@')) return this._email(token);
-    return this._generic(token, original);
+  _guessKeyValue(i, original) {
+    if (!original) return this._generic(i, original);
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(original)) return this._ip(i);
+    if (original.includes('@')) return this._email(i);
+    return this._generic(i, original);
   }
-  _ipv6(token) {
-    const i = this._idx(token);
+  _ipv6(i) {
     const h = n => (n & 0xffff).toString(16).padStart(4, '0');
     return `2001:db8:${h(i)}:${h(i * 7)}::${h(i * 31)}`;
   }
-  _mac(token) {
-    const i = this._idx(token);
+  _mac(i) {
     const b = n => (n & 0xff).toString(16).padStart(2, '0');
-    // Locally administered, unicast: 02:xx:xx:xx:xx:xx
-    return `02:${b(i*13)}:${b(i*17)}:${b(i*19)}:${b(i*23)}:${b(i*29)}`;
+    // Locally administered, unicast: 02:xx:xx:xx:xx:xx. Multiplying by an odd
+    // constant over 32 bits is a bijection, so distinct indices give distinct
+    // addresses. The old form repeated every 256 tokens, and a MAC cannot take
+    // the discriminator suffix the collision fallback would otherwise add.
+    const k = Math.imul(i, 2654435761) >>> 0;
+    return `02:${b(i >>> 24)}:${b(k >>> 24)}:${b(k >>> 16)}:${b(k >>> 8)}:${b(k)}`;
   }
-  _url(token) {
-    const i = this._idx(token);
+  _url(i) {
     const host = PSEUDO_HOST_PREFIXES[i % PSEUDO_HOST_PREFIXES.length];
-    const domain = PSEUDO_DOMAINS[i % PSEUDO_DOMAINS.length];
+    const domain = PSEUDO_DOMAINS[Math.floor(i / PSEUDO_HOST_PREFIXES.length + i * 11) % PSEUDO_DOMAINS.length];
     const paths = ['api/v1', 'internal', 'service', 'endpoint', 'data'];
     return `https://${host}.${domain}/${paths[i % paths.length]}`;
   }
-  _hash(token, original) {
-    const i = this._idx(token);
+  // Every digit came from (i * 31 + j * 7) % 16, so the whole digest was
+  // decided by i modulo 16 and only 16 distinct hashes existed. Running a
+  // small PRNG from a mixed seed gives a full spread, and a hex digest cannot
+  // take the discriminator suffix the collision fallback would add.
+  _hash(i, original) {
     const len = original ? original.replace(/\s/g, '').length : 64;
     const hex = '0123456789abcdef';
+    let x = Math.imul(i + 1, 2654435761) >>> 0;
     let result = '';
-    for (let j = 0; j < len; j++) result += hex[(i * 31 + j * 7) % 16];
+    for (let j = 0; j < len; j++) {
+      x = (Math.imul(x, 1103515245) + 12345) >>> 0;
+      // Top bits: the low bits of an LCG cycle every 16 steps, which made the
+      // digest repeat itself every 16 characters.
+      result += hex[x >>> 28];
+    }
     return result;
   }
-  _iban(token) {
-    const i = this._idx(token);
+  _iban(i) {
     const check = String(10 + (i * 7) % 89).padStart(2, '0');
     const acct = String(10000000000 + (i * 97) % 89999999999);
     return `NO${check} ${acct.slice(0,4)} ${acct.slice(4,8)} ${acct.slice(8)}`;
   }
-  _nationalId(token) {
-    const i = this._idx(token);
+  _nationalId(i) {
     return `ID-${String(100000 + (i * 997) % 899999)}`;
   }
-  _dob(token) {
-    const i = this._idx(token);
-    const y = 1940 + (i * 3) % 60;
-    const m = String(1 + (i * 7) % 12).padStart(2, '0');
-    const d = String(1 + (i * 11) % 28).padStart(2, '0');
+  // Year, month and day each advance on their own scale, so the three together
+  // span 20160 distinct dates instead of repeating every 420 tokens. A date
+  // cannot take the discriminator suffix the collision fallback would add.
+  _dob(i) {
+    const y = 1940 + (i * 7) % 60;
+    const m = String(1 + (Math.floor(i / 60) * 5) % 12).padStart(2, '0');
+    const d = String(1 + (Math.floor(i / 720) * 11) % 28).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
+}
+
+// ─── Pseudonymization scope ───────────────────────────────
+// Decides whether a token should show up as a fake value rather than a
+// <PREFIX-NNN> token. Global pseudonymization covers everything; the
+// IP-only setting covers just the IPv4 sources. Every place that reads or
+// writes fakeMap goes through this, so stale fake values for other types
+// never surface when only the IP setting is on.
+const IPV4_SOURCE_RE = /^(?:ip:|cidr:|auto:ip$)/;
+function wantsFake(settings, source) {
+  if (settings.pseudonymize) return true;
+  return !!settings.pseudonymizeIPs && IPV4_SOURCE_RE.test(source || '');
+}
+function anyFakes(settings) {
+  return !!(settings.pseudonymize || settings.pseudonymizeIPs);
 }
 
 // ─── RedactorEngine ───────────────────────────────────────
@@ -3075,16 +3155,35 @@ class RedactorEngine {
   constructor(sessionManager) {
     this.sm = sessionManager;
     this.reverseMap = {};
+    this.usedFakes = new Set();
     this.pseudoGen = new PseudoGenerator();
     this.lastStats = null;
   }
 
+  // Returns true if any stored fake value had to be repaired, so callers that
+  // are in a position to persist the session know they should.
   rebuildReverse() {
     this.reverseMap = {};
+    this.usedFakes = new Set();
     const s = this.sm.active;
+    let repaired = false;
     for (const [token, orig] of Object.entries(s.map)) {
       this.reverseMap[orig] = token;
     }
+    for (const [token, fake] of Object.entries(s.fakeMap || {})) {
+      if (this.usedFakes.has(fake)) {
+        // Duplicate left over from before uniqueness was enforced. Restoring it
+        // would hand back the wrong original, so give this token its own value.
+        const fixed = this.pseudoGen.generate(token, s.map[token], s.sources[token] || '', this.usedFakes);
+        s.fakeMap[token] = fixed;
+        this.usedFakes.add(fixed);
+        this._dirty = true;
+        repaired = true;
+      } else {
+        this.usedFakes.add(fake);
+      }
+    }
+    return repaired;
   }
 
   getOrCreateToken(original, settings, source) {
@@ -3095,12 +3194,14 @@ class RedactorEngine {
         this._dirty = true;
       }
       // Backfill fake value if pseudonymization enabled but missing for this token
-      if (settings.pseudonymize) {
+      const src = source || this.sm.active.sources[existing] || '';
+      if (wantsFake(settings, src)) {
         const s = this.sm.active;
         if (!s.fakeMap) s.fakeMap = {};
         if (!s.fakeMap[existing]) {
-          const src = source || s.sources[existing] || '';
-          s.fakeMap[existing] = this.pseudoGen.generate(existing, original, src);
+          const fake = this.pseudoGen.generate(existing, original, src, this.usedFakes);
+          s.fakeMap[existing] = fake;
+          this.usedFakes.add(fake);
           this._dirty = true;
         }
       }
@@ -3114,9 +3215,10 @@ class RedactorEngine {
     if (source) s.sources[token] = source;
     this.reverseMap[original] = token;
     // Generate fake value for pseudonymization
-    if (settings.pseudonymize) {
-      const fake = this.pseudoGen.generate(token, original, source);
+    if (wantsFake(settings, source)) {
+      const fake = this.pseudoGen.generate(token, original, source, this.usedFakes);
       s.fakeMap[token] = fake;
+      this.usedFakes.add(fake);
     }
     this._dirty = true;
     return token;
@@ -3170,15 +3272,20 @@ class RedactorEngine {
       while ((m = ipRe.exec(result)) !== null) {
         if (isValidIPv4(m[0])) foundIPs.add(m[0]);
       }
+      // A term always wins the source label, so the session table can show
+      // which term caught the address. Anything else is only taken when
+      // auto-detection is on, and is labelled auto:ip like the other
+      // auto-detected types.
+      let autoCount = 0;
       for (const ip of foundIPs) {
         const isExplicitIP = ipTerms.some(t => t.value === ip);
-        const isInCIDR = cidrTerms.some(t => ipInCidr(ip, t.value));
-        if (isExplicitIP || isInCIDR) {
-          const ipSource = isExplicitIP
-            ? `ip:${ip}`
-            : `cidr:${cidrTerms.find(t => ipInCidr(ip, t.value)).value}`;
-          ipMatches.set(ip, this.getOrCreateToken(ip, settings, ipSource));
-        }
+        const cidr = cidrTerms.find(t => ipInCidr(ip, t.value));
+        let ipSource;
+        if (isExplicitIP) ipSource = `ip:${ip}`;
+        else if (cidr) ipSource = `cidr:${cidr.value}`;
+        else if (settings.autoDetectIPs) { ipSource = 'auto:ip'; autoCount++; }
+        else continue;
+        ipMatches.set(ip, this.getOrCreateToken(ip, settings, ipSource));
       }
       const sortedIPs = [...ipMatches.entries()].sort((a, b) => b[0].length - a[0].length);
       for (const [ip, token] of sortedIPs) {
@@ -3187,11 +3294,15 @@ class RedactorEngine {
         result = result.replace(new RegExp(escaped, 'g'), token);
         if (result !== before) replacements++;
       }
-      for (const term of cidrTerms) stats.push({ value: term.value, type: 'cidr', count: ipMatches.size });
+      for (const term of cidrTerms) {
+        const count = [...ipMatches.keys()].filter(ip => ipInCidr(ip, term.value)).length;
+        stats.push({ value: term.value, type: 'cidr', count });
+      }
       for (const term of ipTerms) {
         const matched = ipMatches.has(term.value) ? 1 : 0;
         stats.push({ value: term.value, type: 'ip', count: matched });
       }
+      if (autoCount > 0) stats.push({ value: t('autoDetected', { n: autoCount, type: 'ip' }), type: 'ip', count: autoCount });
     }
 
     // Step 2: Text terms (longest first)
@@ -3202,11 +3313,8 @@ class RedactorEngine {
     }
     for (const term of sorted) {
       const escaped = escapeRegex(term.value);
-      const hasNonASCII = /[^\x00-\x7F]/.test(term.value);
-      const pattern = settings.wholeWord
-        ? (hasNonASCII ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : `\\b${escaped}\\b`)
-        : escaped;
-      const re = new RegExp(pattern, settings.wholeWord && hasNonASCII ? 'giu' : 'gi');
+      const pattern = settings.wholeWord ? wholeWordPattern(escaped) : escaped;
+      const re = new RegExp(pattern, settings.wholeWord ? 'giu' : 'gi');
       let count = 0;
       const before = result;
       const termSource = `${term.type}:${term.value}`;
@@ -3299,12 +3407,13 @@ class RedactorEngine {
     this.backfillSources(terms, settings);
 
     // Step 8: Replace tokens with fake values (pseudonymization)
-    if (settings.pseudonymize) {
+    if (anyFakes(settings)) {
       const s = this.sm.active;
       if (!s.fakeMap) s.fakeMap = {};
       const prefix = escapeRegex(settings.prefix);
       const tokenRe = new RegExp(`<${prefix}-(\\d{3,})>`, 'g');
-      result = result.replace(tokenRe, (match) => s.fakeMap[match] || match);
+      result = result.replace(tokenRe, (match) =>
+        wantsFake(settings, s.sources[match]) && s.fakeMap[match] ? s.fakeMap[match] : match);
     }
 
     if (this._dirty) await this.sm.save();
@@ -3369,16 +3478,14 @@ class RedactorEngine {
     const warnings = [];
 
     // Restore pseudonymized fake values → originals
-    if (settings.pseudonymize && s.fakeMap) {
+    if (anyFakes(settings) && s.fakeMap) {
       const fakeEntries = Object.entries(s.fakeMap)
+        .filter(([token]) => wantsFake(settings, s.sources[token]))
         .map(([token, fake]) => ({ fake, original: s.map[token] }))
         .filter(e => e.original)
         .sort((a, b) => b.fake.length - a.fake.length);
       for (const { fake, original } of fakeEntries) {
-        const escaped = escapeRegex(fake);
-        const hasNonASCII = /[^\x00-\x7F]/.test(fake);
-        const pat = hasNonASCII ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : `\\b${escaped}\\b`;
-        result = result.replace(new RegExp(pat, hasNonASCII ? 'gu' : 'g'), original);
+        result = result.replace(new RegExp(wholeWordPattern(escapeRegex(fake)), 'gu'), original);
       }
     }
 
@@ -3423,17 +3530,19 @@ class UndoManager {
     if (this.undoStack.length > 50) this.undoStack.shift();
   }
 
-  undo() {
+  // `current` is what is on screen right now. It moves to the opposite stack so
+  // the step can be replayed, and the popped state is what the caller restores.
+  undo(current) {
     if (this.undoStack.length === 0) return null;
     const state = this.undoStack.pop();
-    this.redoStack.push(state);
-    return this.undoStack.length > 0 ? this.undoStack[this.undoStack.length - 1] : null;
+    this.redoStack.push(current);
+    return state;
   }
 
-  redo() {
+  redo(current) {
     if (this.redoStack.length === 0) return null;
     const state = this.redoStack.pop();
-    this.undoStack.push(state);
+    this.undoStack.push(current);
     return state;
   }
 }
@@ -3552,7 +3661,7 @@ class UI {
   async initStores() {
     await this.termList.init();
     await this.sessionManager.init();
-    this.engine.rebuildReverse();
+    if (this.engine.rebuildReverse()) await this.sessionManager.save();
     this.render();
     if (!cryptoStore.isEnabled() && (this.termList.terms.length > 0 || this.engine.sessionSize > 0)) {
       this.setStatus(t('unencryptedWarning'), 'warning');
@@ -3593,6 +3702,7 @@ class UI {
       settingPrefix: document.getElementById('settingPrefix'),
       settingWholeWord: document.getElementById('settingWholeWord'),
       settingPseudonymize: document.getElementById('settingPseudonymize'),
+      settingPseudonymizeIPs: document.getElementById('settingPseudonymizeIPs'),
       settingAutoIP: document.getElementById('settingAutoIP'),
       settingAutoEmail: document.getElementById('settingAutoEmail'),
       settingAutoFQDN: document.getElementById('settingAutoFQDN'),
@@ -3673,6 +3783,7 @@ class UI {
     document.getElementById('btnResetSettings').addEventListener('click', () => this.resetSettings());
     this.els.settingWholeWord.addEventListener('click', () => this.toggleSwitch(this.els.settingWholeWord));
     this.els.settingPseudonymize.addEventListener('click', () => this.toggleSwitch(this.els.settingPseudonymize));
+    this.els.settingPseudonymizeIPs.addEventListener('click', () => this.toggleSwitch(this.els.settingPseudonymizeIPs));
     this.els.settingAutoIP.addEventListener('click', () => this.toggleSwitch(this.els.settingAutoIP));
     this.els.settingAutoEmail.addEventListener('click', () => this.toggleSwitch(this.els.settingAutoEmail));
     this.els.settingAutoFQDN.addEventListener('click', () => this.toggleSwitch(this.els.settingAutoFQDN));
@@ -3995,7 +4106,7 @@ class UI {
     this.els.sessionStatusInline.textContent = entries.length > 0
       ? t('replacementsInSession', { n: entries.length }) : '';
     const thFake = document.getElementById('thFakeValue');
-    if (thFake) thFake.style.display = this.settings.pseudonymize ? '' : 'none';
+    if (thFake) thFake.style.display = anyFakes(this.settings) ? '' : 'none';
 
     if (entries.length === 0) {
       this.els.sessionTableBody.innerHTML = '';
@@ -4012,9 +4123,9 @@ class UI {
         const td3 = document.createElement('td');
         td3.textContent = s.sources[token] || '';
         tr.append(td1, td2, td3);
-        if (this.settings.pseudonymize && s.fakeMap) {
+        if (anyFakes(this.settings) && s.fakeMap) {
           const td4 = document.createElement('td');
-          td4.textContent = s.fakeMap[token] || '';
+          td4.textContent = wantsFake(this.settings, s.sources[token]) ? (s.fakeMap[token] || '') : '';
           tr.appendChild(td4);
         }
         this.els.sessionTableBody.appendChild(tr);
@@ -4135,10 +4246,7 @@ class UI {
 
     try {
       // Save state for undo (plain text only — never store raw HTML)
-      this.undoManager.push({
-        input: text,
-        outputText: this.currentOutputText,
-      });
+      this.undoManager.push(this.currentState());
 
       const { output, replacements, stats } = await this.engine.redact(text, this.termList.terms, this.settings);
       this.currentOutputText = output;
@@ -4156,10 +4264,7 @@ class UI {
     const text = this.els.inputText.value;
     if (!text) { this.setStatus(t('noInputText')); return; }
 
-    this.undoManager.push({
-      input: text,
-      outputText: this.currentOutputText,
-    });
+    this.undoManager.push(this.currentState());
 
     const { output, warnings } = this.engine.restore(text, this.settings);
     this.currentOutputText = output;
@@ -4177,20 +4282,18 @@ class UI {
     el.textContent = '';
     if (!text) return;
 
-    // Build highlight regex: tokens or fake values
-    let hlRe;
-    if (this.settings.pseudonymize) {
+    // Build highlight regex: tokens, plus whichever fake values are in play.
+    // With only the IP setting on, the output mixes both.
+    const prefix = escapeRegex(this.settings.prefix);
+    const alternatives = [`<${prefix}-\\d{3,}>`];
+    if (anyFakes(this.settings)) {
       const s = this.sessionManager.active;
-      const fakes = Object.values(s.fakeMap || {}).filter(Boolean);
-      if (fakes.length > 0) {
-        const escaped = fakes.sort((a, b) => b.length - a.length).map(escapeRegex);
-        hlRe = new RegExp(`(${escaped.join('|')})`, 'g');
-      }
+      const fakes = Object.entries(s.fakeMap || {})
+        .filter(([token, fake]) => fake && wantsFake(this.settings, s.sources[token]))
+        .map(([, fake]) => fake);
+      alternatives.push(...fakes.sort((a, b) => b.length - a.length).map(escapeRegex));
     }
-    if (!hlRe) {
-      const prefix = escapeRegex(this.settings.prefix);
-      hlRe = new RegExp(`(<${prefix}-\\d{3,}>)`, 'g');
-    }
+    const hlRe = new RegExp(`(${alternatives.join('|')})`, 'g');
 
     const parts = text.split(hlRe);
     for (const part of parts) {
@@ -4260,8 +4363,12 @@ class UI {
     }
   }
 
+  currentState() {
+    return { input: this.els.inputText.value, outputText: this.currentOutputText };
+  }
+
   doUndo() {
-    const state = this.undoManager.undo();
+    const state = this.undoManager.undo(this.currentState());
     if (!state) { this.setStatus(t('nothingToUndo')); return; }
     this.els.inputText.value = state.input;
     this.currentOutputText = state.outputText;
@@ -4269,7 +4376,7 @@ class UI {
   }
 
   doRedo() {
-    const state = this.undoManager.redo();
+    const state = this.undoManager.redo(this.currentState());
     if (!state) { this.setStatus(t('nothingToRedo')); return; }
     this.els.inputText.value = state.input;
     this.currentOutputText = state.outputText;
@@ -4535,6 +4642,7 @@ class UI {
     this.els.settingPrefix.value = this.settings.prefix;
     this.els.settingWholeWord.classList.toggle('on', this.settings.wholeWord);
     this.els.settingPseudonymize.classList.toggle('on', this.settings.pseudonymize || false);
+    this.els.settingPseudonymizeIPs.classList.toggle('on', this.settings.pseudonymizeIPs || false);
     this.els.settingAutoIP.classList.toggle('on', this.settings.autoDetectIPs);
     this.els.settingAutoEmail.classList.toggle('on', this.settings.autoDetectEmails || false);
     this.els.settingAutoFQDN.classList.toggle('on', this.settings.autoDetectFQDN || false);
@@ -4559,6 +4667,7 @@ class UI {
     this.settings.prefix = prefix;
     this.settings.wholeWord = this.els.settingWholeWord.classList.contains('on');
     this.settings.pseudonymize = this.els.settingPseudonymize.classList.contains('on');
+    this.settings.pseudonymizeIPs = this.els.settingPseudonymizeIPs.classList.contains('on');
     this.settings.autoDetectIPs = this.els.settingAutoIP.classList.contains('on');
     this.settings.autoDetectEmails = this.els.settingAutoEmail.classList.contains('on');
     this.settings.autoDetectFQDN = this.els.settingAutoFQDN.classList.contains('on');

@@ -111,6 +111,10 @@ Optional mode (toggle in Settings) — instead of replacing values with `<REDACT
 
 Fake values are deterministic per token within a session — the same token always renders the same fake value, so the output stays internally consistent. The mapping is stored in the session, so you can still restore the original text afterwards.
 
+#### IP-only anonymization
+
+If you only want the IP addresses to look real and everything else to stay as `<REDACTED-NNN>` tokens, turn on "Anonymize IPs (fake addresses)" in Settings instead of full pseudonymization. Every IPv4 address (auto-detected, or matched by an `ip:` or `cidr:` term) gets a fake RFC 5737 address; names, emails and other matches are still tokens. The same original address always maps to the same fake address within a session, and two different originals never share one, so Restore still gives back the exact input. Typical use: sharing a log or network trace where the addresses need to stay distinguishable but must not be real.
+
 ### Sessions
 
 Each session maintains a consistent mapping between original values and tokens. The same input always produces the same token within a session.
